@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Toxo MLST Allele Caller</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Archivo:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a single working column — intake band, run summary, results table, then the selected sample's review sheet. */
+:root{
+  --bg:#F4F6F4; --surface:#FFFFFF; --sunk:#EBEFEC; --ink:#17201C; --muted:#5A6862; --line:#D9E0DB;
+  --accent:#0F6A5B; --accent-ink:#FFFFFF; --accent-soft:#DCEEE9;
+  --ok:#2C7A3B; --ok-soft:#E1F1E3; --warn:#9A6A12; --warn-soft:#FBF0D9; --bad:#B0281F; --bad-soft:#F9E1DE; --info:#3F5A86; --info-soft:#E3E9F4;
+  --bA:#1F9A3B; --bC:#2459CF; --bG:#17201C; --bT:#D0352A;
+  --f-display:"Archivo","Helvetica Neue",Arial,sans-serif; --f-body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif; --f-mono:"IBM Plex Mono",ui-monospace,Menlo,Consolas,monospace;
+  --r:6px; color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#111614; --surface:#18201C; --sunk:#0D1210; --ink:#E4EBE7; --muted:#97A59E; --line:#2B3530;
+  --accent:#4DB7A2; --accent-ink:#0B1311; --accent-soft:#163A33;
+  --ok:#6BC17B; --ok-soft:#173222; --warn:#E2B04F; --warn-soft:#3A2D12; --bad:#F07B70; --bad-soft:#3F1B18; --info:#8FA9D8; --info-soft:#1D2A40;
+  --bA:#4CC56A; --bC:#6E9BF5; --bG:#E4EBE7; --bT:#F26A5E; color-scheme:dark }}
+:root[data-theme="dark"]{
+  --bg:#111614; --surface:#18201C; --sunk:#0D1210; --ink:#E4EBE7; --muted:#97A59E; --line:#2B3530;
+  --accent:#4DB7A2; --accent-ink:#0B1311; --accent-soft:#163A33;
+  --ok:#6BC17B; --ok-soft:#173222; --warn:#E2B04F; --warn-soft:#3A2D12; --bad:#F07B70; --bad-soft:#3F1B18; --info:#8FA9D8; --info-soft:#1D2A40;
+  --bA:#4CC56A; --bC:#6E9BF5; --bG:#E4EBE7; --bT:#F26A5E; color-scheme:dark }
+*{box-sizing:border-box}
+html,body{margin:0}
+body{background:var(--bg);color:var(--ink);font:15px/1.5 var(--f-body);-webkit-font-smoothing:antialiased}
+.wrap{max-width:1180px;margin:0 auto;padding-inline:20px;padding-block:28px 64px;display:flex;flex-direction:column;gap:28px}
+h1,h2,h3{font-family:var(--f-display);margin:0;text-wrap:balance;letter-spacing:-.01em}
+h1{font-size:1.9rem;font-weight:700}
+h2{font-size:1.2rem;font-weight:600}
+h3{font-size:1rem;font-weight:600}
+p{margin:0}
+.muted{color:var(--muted)}
+.mono{font-family:var(--f-mono)}
+.label{font-size:.72rem;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);font-weight:600}
+button,.btn{font:inherit;font-weight:500;border:1px solid var(--line);background:var(--surface);color:var(--ink);border-radius:var(--r);padding:7px 13px;cursor:pointer;display:inline-flex;align-items:center;gap:6px;text-decoration:none;line-height:1.3}
+button:hover,.btn:hover{border-color:var(--accent)}
+button.primary,.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button:focus-visible,.btn:focus-visible,input:focus-visible,select:focus-visible,summary:focus-visible,.cell:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button:disabled{opacity:.5;cursor:default}
+input[type=text],input[type=number],select{font:inherit;color:var(--ink);background:var(--surface);border:1px solid var(--line);border-radius:4px;padding:4px 7px}
+
+header.top{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px 24px;border-bottom:1px solid var(--line);padding-bottom:18px}
+header.top .sub{color:var(--muted);max-width:62ch}
+.panelbadge{font-family:var(--f-mono);font-size:.8rem;background:var(--sunk);border:1px solid var(--line);border-radius:4px;padding:4px 8px;color:var(--muted)}
+
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;counter-reset:s}
+.step{display:flex;gap:10px;align-items:flex-start;color:var(--muted);font-size:.9rem}
+.step b{display:block;color:var(--ink);font-weight:600}
+.step::before{counter-increment:s;content:counter(s);flex:none;width:24px;height:24px;border-radius:50%;border:1px solid var(--line);display:grid;place-items:center;font:600 .8rem var(--f-display);color:var(--ink);background:var(--surface)}
+@media (max-width:640px){.steps{grid-template-columns:1fr}}
+
+.drop{border:1.5px dashed var(--line);border-radius:10px;background:var(--surface);padding:26px 22px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:16px;transition:border-color .15s,background .15s}
+.drop.over{border-color:var(--accent);background:var(--accent-soft)}
+.drop .msg{display:flex;flex-direction:column;gap:4px;min-width:0}
+.drop .msg strong{font-family:var(--f-display);font-size:1.15rem;font-weight:600}
+.drop .acts{display:flex;flex-wrap:wrap;gap:8px}
+.progress{height:4px;background:var(--sunk);border-radius:2px;overflow:hidden}
+.progress i{display:block;height:100%;background:var(--accent);width:0;transition:width .1s}
+
+.summary{display:flex;flex-wrap:wrap;gap:10px 22px;align-items:baseline}
+.summary .n{font:600 1.5rem var(--f-display);font-variant-numeric:tabular-nums}
+.summary .k{display:flex;gap:7px;align-items:baseline}
+.dot{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
+
+.tablebox{overflow-x:auto;border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:.74rem;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:600;background:var(--sunk);white-space:nowrap}
+tr:last-child td{border-bottom:0}
+.cell{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:3px 11px 3px 9px;font-weight:500;font-size:.9rem;cursor:pointer;border:1px solid transparent;white-space:nowrap;background:none;color:inherit}
+.cell.sel{border-color:var(--ink)}
+.s-ok{background:var(--ok-soft);color:var(--ok)}
+.s-review{background:var(--warn-soft);color:var(--warn)}
+.s-novel,.s-bad{background:var(--bad-soft);color:var(--bad)}
+.s-ok .dot{background:var(--ok)} .s-review .dot{background:var(--warn)} .s-novel .dot,.s-bad .dot{background:var(--bad)}
+.cell .txt{color:var(--ink)}
+
+.sheet{border:1px solid var(--line);border-radius:10px;background:var(--surface);padding:22px;display:flex;flex-direction:column;gap:22px}
+.sheet-head{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:flex-start}
+.sheet-head .call{font:700 1.6rem var(--f-display)}
+.flags{display:flex;flex-direction:column;gap:8px;margin:0;padding:0;list-style:none}
+.flags li{padding:9px 12px;border-radius:6px;font-size:.92rem;display:flex;gap:10px}
+.flags li::before{content:"";flex:none;width:3px;border-radius:2px;background:currentColor}
+.flags .bad{background:var(--bad-soft);color:var(--bad)} .flags .warn{background:var(--warn-soft);color:var(--warn)} .flags .info{background:var(--info-soft);color:var(--info)}
+.flags li span{color:var(--ink)}
+.grid2{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:22px}
+@media (max-width:760px){.grid2{grid-template-columns:1fr}}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:4px 14px;font-size:.9rem}
+.kv dt{color:var(--muted)} .kv dd{margin:0;min-width:0;overflow-wrap:anywhere}
+.bars{display:flex;flex-direction:column;gap:6px}
+.bar{display:grid;grid-template-columns:7.5rem 1fr 2.2rem;gap:10px;align-items:center;font-size:.9rem}
+.bar .track{height:8px;background:var(--sunk);border-radius:4px;overflow:hidden}
+.bar .track i{display:block;height:100%;background:var(--muted)}
+.bar.best .track i{background:var(--accent)}
+.bar .v{text-align:right;font-variant-numeric:tabular-nums;font-family:var(--f-mono);font-size:.85rem}
+
+.snp{overflow-x:auto;border:1px solid var(--line);border-radius:8px}
+.snp table{width:auto;font-family:var(--f-mono);font-size:.85rem}
+.snp th,.snp td{padding:4px 7px;text-align:center;border-bottom:1px solid var(--line);border-left:1px solid var(--line)}
+.snp th:first-child,.snp td:first-child{text-align:left;position:sticky;left:0;background:var(--surface);font-family:var(--f-body);white-space:nowrap;border-left:0}
+.snp th{background:var(--sunk);font-family:var(--f-mono);text-transform:none;letter-spacing:0;font-size:.75rem;font-weight:500}
+.snp th:first-child{background:var(--sunk)}
+.snp tr.sample td{font-weight:600;background:var(--sunk)}
+.snp tr.sample td:first-child{background:var(--sunk)}
+.snp td.d{background:var(--bad-soft);color:var(--bad)}
+.snp td.a{background:var(--warn-soft);color:var(--warn)}
+.snp td.m{color:var(--ok)}
+.snp th.clk{cursor:pointer;text-decoration:underline dotted}
+.b-A{color:var(--bA)}.b-C{color:var(--bC)}.b-G{color:var(--bG)}.b-T{color:var(--bT)}
+
+.seqbox{font-family:var(--f-mono);font-size:.8rem;background:var(--sunk);border:1px solid var(--line);border-radius:6px;padding:10px 12px;max-height:150px;overflow:auto;overflow-wrap:anywhere;word-break:break-all;line-height:1.55}
+.chips{display:flex;flex-wrap:wrap;gap:6px}
+.chip{font-family:var(--f-mono);font-size:.8rem;padding:3px 9px;border-radius:999px;border:1px solid var(--line);background:var(--surface);cursor:pointer;color:var(--ink)}
+.chip.on{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+.chip.k-d{border-color:var(--bad)} .chip.k-a{border-color:var(--warn)} .chip.k-u{border-color:var(--info)}
+.traces{display:flex;flex-direction:column;gap:10px}
+.trace{border:1px solid var(--line);border-radius:6px;background:var(--surface);overflow:hidden}
+.trace .cap{display:flex;justify-content:space-between;gap:8px;font-size:.8rem;color:var(--muted);padding:5px 10px;border-bottom:1px solid var(--line);background:var(--sunk);flex-wrap:wrap}
+.trace canvas{display:block;width:100%;height:150px}
+.legend{display:flex;gap:14px;font-family:var(--f-mono);font-size:.8rem}
+
+details.more{border:1px solid var(--line);border-radius:8px;background:var(--surface)}
+details.more>summary{cursor:pointer;padding:12px 16px;font-weight:600;font-family:var(--f-display);list-style:none;display:flex;justify-content:space-between;gap:10px}
+details.more>summary::after{content:"+";color:var(--muted);font-weight:400}
+details.more[open]>summary::after{content:"–"}
+details.more>.in{padding:0 16px 16px;display:flex;flex-direction:column;gap:14px}
+.files td input{width:100%;min-width:9rem}
+.row{display:flex;flex-wrap:wrap;gap:10px;align-items:center}
+.toast{position:fixed;left:50%;bottom:calc(20px + env(safe-area-inset-bottom,0px));transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:8px 14px;border-radius:6px;font-size:.9rem;opacity:0;transition:opacity .2s;pointer-events:none}
+.toast.on{opacity:1}
+.empty{padding:22px;color:var(--muted);text-align:center}
+footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padding-top:16px;display:flex;flex-direction:column;gap:6px}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div style="display:flex;flex-direction:column;gap:6px;min-width:0">
+      <span class="label">Toxoplasma gondii · Sanger MLST</span>
+      <h1>Toxo MLST Allele Caller</h1>
+      <p class="sub">Assembles forward and reverse reads, compares each consensus to the reference alleles, and calls the allele. Positions that need an expert eye are flagged, with the chromatogram one click away. Your files are read in this browser and are never uploaded.</p>
+    </div>
+    <span class="panelbadge" id="panelBadge"></span>
+  </header>
+
+  <div class="steps" aria-label="How it works">
+    <div class="step"><div><b>Add your reads</b>Drop .ab1 files, a folder, or a .zip. Forward and reverse reads are paired by sample name.</div></div>
+    <div class="step"><div><b>Review what is flagged</b>Clean samples are called automatically. Amber and red rows explain what to check.</div></div>
+    <div class="step"><div><b>Export</b>Download the allele table for Excel, the details, and the consensus sequences.</div></div>
+  </div>
+
+  <section class="drop" id="drop" aria-label="Add sequence files">
+    <div class="msg">
+      <strong>Drop sequence files here</strong>
+      <span class="muted" id="dropHint">.ab1 chromatograms work best. FASTA or .seq text files are accepted, but they carry no quality scores or traces.</span>
+    </div>
+    <div class="acts">
+      <button class="primary" id="pickFiles">Choose files</button>
+      <button id="pickFolder">Choose folder</button>
+      <button id="loadExample">Load example PK1 reads</button>
+      <input type="file" id="fileInput" multiple hidden accept=".ab1,.abi,.fasta,.fa,.fas,.seq,.txt,.zip">
+      <input type="file" id="folderInput" webkitdirectory multiple hidden>
+    </div>
+    <div class="progress" id="prog" style="flex-basis:100%" hidden><i></i></div>
+  </section>
+
+  <section id="resultsSec" hidden style="display:flex;flex-direction:column;gap:14px">
+    <div class="row" style="justify-content:space-between">
+      <div class="row" style="gap:14px"><div class="summary" id="summary"></div><span class="panelbadge" id="exampleNote" hidden>Example data: PK1 test reads</span></div>
+      <div class="row">
+        <button id="copyTable" title="Copy the allele table, then paste into Excel">Copy table</button>
+        <button id="dlSummary" class="primary">Download allele table (.csv)</button>
+        <button id="dlDetails">Details (.csv)</button>
+        <button id="dlFasta">Consensus sequences (.fasta)</button>
+        <button id="clearAll">Clear</button>
+      </div>
+    </div>
+    <div class="tablebox"><table id="resTable"></table></div>
+    <p class="muted" style="font-size:.85rem">Select any call to open its review sheet.</p>
+  </section>
+
+  <section id="sheet" class="sheet" hidden aria-live="polite"></section>
+
+  <details class="more" id="filesBox" hidden>
+    <summary><span>Files and pairing <span class="muted" id="filesCount" style="font-family:var(--f-body);font-weight:400;margin-left:6px"></span></span></summary>
+    <div class="in">
+      <p class="muted" style="font-size:.9rem">Sample names come from the file names. If two reads from the same sample were not paired, give them the same sample name here and choose Re-run.</p>
+      <div class="tablebox files"><table id="filesTable"></table></div>
+      <div class="row"><button id="rerun" class="primary">Re-run with these names</button></div>
+    </div>
+  </details>
+
+  <details class="more" id="refBox">
+    <summary>Reference panel</summary>
+    <div class="in">
+      <p class="muted" style="font-size:.9rem">Calls are only as good as this panel. Each marker is compared over the region that every reference covers. To use your own panel, load a FASTA file whose headers read <span class="mono">&gt;MARKER|Allele name|optional note</span>, for example <span class="mono">&gt;SAG3|Type II|GenBank AB123456</span>.</p>
+      <div id="refList"></div>
+      <div class="row">
+        <button id="loadRefs">Load reference FASTA…</button>
+        <label class="row" style="gap:6px;font-size:.9rem"><input type="checkbox" id="replaceRefs"> Replace the built-in panel</label>
+        <button id="dlRefs">Download panel (.fasta)</button>
+        <input type="file" id="refInput" hidden accept=".fasta,.fa,.fas,.txt,.ab1">
+      </div>
+    </div>
+  </details>
+
+  <details class="more">
+    <summary>Settings</summary>
+    <div class="in">
+      <div class="kv" style="align-items:center;max-width:640px">
+        <dt><label for="optMott">Trimming error limit</label></dt>
+        <dd class="row"><input type="number" id="optMott" step="0.01" min="0.001" max="0.5" value="0.05" style="width:6rem"><span class="muted" style="font-size:.85rem">Mott's algorithm on .ab1 quality scores. 0.05 matches the Geneious default.</span></dd>
+        <dt><label for="optPeak">Double-peak threshold</label></dt>
+        <dd class="row"><input type="number" id="optPeak" step="0.05" min="0.1" max="0.9" value="0.33" style="width:6rem"><span class="muted" style="font-size:.85rem">Second-highest peak as a fraction of the highest. Above this, the base is written as an ambiguity code.</span></dd>
+      </div>
+      <div class="row"><button id="applySettings">Apply and re-run</button></div>
+    </div>
+  </details>
+
+  <footer>
+    <span>Method: reads are matched to a marker and oriented by shared 12-mers, trimmed with Mott's algorithm (when quality scores exist), assembled by overlap alignment, then aligned to every reference. A call needs zero differences across the shared comparison region. Forward/reverse disagreements are excluded and reported. Ambiguity codes at positions that distinguish references raise a mixed-infection flag.</span>
+    <span>Proof of concept for the VEuPathDB / ToxoDB community. The reference panel is a sample and is not yet complete.</span>
+  </footer>
+</div>
+<div class="toast" id="toast" role="status"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+/*CORE*/
+</script>
+<script>
+const BUILTIN_PANEL = /*PANEL*/;
+const EXAMPLE_READS = /*EXAMPLE*/;
+</script>
+<script>
+(() => {
+'use strict';
+const $ = s => document.querySelector(s);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const STATUS = { ok: 'Called', review: 'Review', novel: 'No match', bad: 'Failed' };
+
+let panelRefs = BUILTIN_PANEL.map(r => ({ ...r, source: 'built-in' }));
+let panel = MLST.buildPanel(panelRefs);
+let reads = [];          // parsed reads currently loaded
+let overrides = {};      // fileName -> {sample}
+let state = null;        // {plan, results}
+let selected = null;     // index into results
+let selPos = null;       // selected consensus position for traces
+const opts = { ...MLST.DEFAULTS };
+
+function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 2400); }
+function panelBadge() {
+  const mk = Object.values(panel.markers);
+  $('#panelBadge').textContent = `Reference panel: ${mk.map(m => `${m.name} (${m.refs.length} alleles)`).join(', ')}`;
+}
+
+/* ---------- File intake ---------- */
+async function readEntries(items) {
+  const out = [];
+  const walk = async (entry, prefix) => {
+    if (entry.isFile) { const f = await new Promise((res, rej) => entry.file(res, rej)); out.push(f); }
+    else if (entry.isDirectory) {
+      const rd = entry.createReader();
+      let batch; do { batch = await new Promise((res, rej) => rd.readEntries(res, rej)); for (const e of batch) await walk(e); } while (batch.length);
+    }
+  };
+  for (const it of items) { const e = it.webkitGetAsEntry && it.webkitGetAsEntry(); if (e) await walk(e); else if (it.getAsFile) { const f = it.getAsFile(); if (f) out.push(f); } }
+  return out;
+}
+async function expandFiles(files) {
+  const out = [];
+  for (const f of files) {
+    const name = f.name.split('/').pop();
+    if (name.startsWith('.') || name.startsWith('~$')) continue;
+    if (/\.zip$/i.test(name)) {
+      if (typeof JSZip === 'undefined') { toast('Unzip the archive first. Opening .zip files needs an internet connection.'); continue; }
+      const zip = await JSZip.loadAsync(await f.arrayBuffer());
+      for (const z of Object.values(zip.files)) {
+        const zn = z.name.split('/').pop();
+        if (z.dir || !zn || zn.startsWith('.') || z.name.includes('__MACOSX')) continue;
+        if (!/\.(ab1|abi|fasta|fa|fas|seq|txt)$/i.test(zn)) continue;
+        out.push({ name: zn, buf: await z.async('arraybuffer') });
+      }
+    } else if (/\.(ab1|abi|fasta|fa|fas|seq|txt)$/i.test(name)) out.push({ name, buf: await f.arrayBuffer() });
+  }
+  return out;
+}
+async function addFiles(fileList, isExample) {
+  if (!isExample && !$('#exampleNote').hidden) { reads = []; overrides = {}; selected = null; $('#exampleNote').hidden = true; }
+  const items = await expandFiles(fileList);
+  if (!items.length) { toast('No sequence files found. Expected .ab1, .fasta or .seq files.'); return; }
+  let added = 0, refAdded = 0; const errors = [];
+  for (const it of items) {
+    try {
+      const parsed = MLST.parseFile(it.name, it.buf);
+      const nm = MLST.interpretName(it.name, Object.keys(panel.markers));
+      if (nm.isRef) { refAdded += addRefsFromReads(parsed, nm); continue; }
+      reads = reads.filter(r => r.fileName !== it.name);
+      reads.push(...parsed); added += parsed.length;
+    } catch (e) { errors.push(`${it.name}: ${e.message}`); }
+  }
+  if (refAdded) toast(`${refAdded} reference file(s) added to the panel for this session.`);
+  if (errors.length) toast(errors[0]);
+  await run();
+}
+function addRefsFromReads(parsed, nm) {
+  let n = 0;
+  for (const p of parsed) {
+    const marker = nm.marker || Object.keys(panel.markers)[0];
+    const name = nm.sample.replace(/(^|[\s_-])(ref|reference)([\s_-]|$)/ig, ' ').replace(/\s+/g, ' ').trim() || p.fileName;
+    const seq = p.seq, rc = MLST.revcomp(seq);
+    if (panelRefs.some(r => r.marker === marker && (r.seq === seq || r.seq === rc || MLST.revcomp(r.seq) === seq))) continue;
+    panelRefs.push({ marker, name, seq, note: 'Loaded from ' + p.fileName, source: 'session' }); n++;
+  }
+  if (n) { panel = MLST.buildPanel(panelRefs); panelBadge(); renderRefs(); }
+  return n;
+}
+
+/* ---------- Run ---------- */
+async function run() {
+  if (!reads.length) { $('#resultsSec').hidden = true; $('#sheet').hidden = true; $('#filesBox').hidden = true; return; }
+  const plan = MLST.planGroups(reads, panel, opts, overrides);
+  const prog = $('#prog'), bar = prog.querySelector('i'); prog.hidden = false;
+  const results = [];
+  for (let i = 0; i < plan.groups.length; i++) {
+    results.push(MLST.analyzeGroup(plan.groups[i], panel, opts));
+    if (i % 3 === 2) { bar.style.width = (100 * (i + 1) / plan.groups.length) + '%'; await new Promise(r => setTimeout(r)); }
+  }
+  MLST.sortResults(results);
+  prog.hidden = true; bar.style.width = '0';
+  state = { plan, results };
+  const keep = selected != null && state.results[selected] ? selected : results.findIndex(r => r.status !== 'ok');
+  selected = keep >= 0 ? keep : (results.length ? 0 : null); selPos = null;
+  renderResults(); renderFiles(); renderSheet();
+}
+
+/* ---------- Results table ---------- */
+function samplesAndMarkers() {
+  const samples = [], seen = new Map();
+  state.results.forEach((r, i) => { const k = MLST.sampleKey(r.sample); if (!seen.has(k)) { seen.set(k, { name: r.sample, cells: {} }); samples.push(seen.get(k)); } seen.get(k).cells[r.marker] = i; });
+  const markers = Object.keys(panel.markers).filter(m => state.results.some(r => r.marker === m));
+  return { samples, markers };
+}
+function renderResults() {
+  $('#resultsSec').hidden = false;
+  const counts = { ok: 0, review: 0, novel: 0, bad: 0 };
+  state.results.forEach(r => counts[r.status]++);
+  const { samples, markers } = samplesAndMarkers();
+  $('#summary').innerHTML = `<span class="k"><span class="n">${samples.length}</span><span class="muted">samples</span></span>` +
+    [['ok', 'var(--ok)'], ['review', 'var(--warn)'], ['novel', 'var(--bad)'], ['bad', 'var(--bad)']].filter(([k]) => counts[k] || k !== 'bad')
+      .map(([k, c]) => `<span class="k"><span class="dot" style="background:${c}"></span><span class="n">${counts[k]}</span><span class="muted">${STATUS[k].toLowerCase()}</span></span>`).join('');
+  const head = `<tr><th>Sample</th>${markers.map(m => `<th>${esc(m)}</th>`).join('')}${markers.length > 1 ? '<th>Profile</th>' : ''}<th>Needs attention</th></tr>`;
+  const body = samples.map(s => {
+    const cells = markers.map(m => {
+      const i = s.cells[m]; if (i === undefined) return '<td class="muted">—</td>';
+      const r = state.results[i];
+      return `<td><button class="cell s-${r.status}${i === selected ? ' sel' : ''}" data-i="${i}" aria-label="${esc(r.sample)} ${esc(m)}: ${esc(r.call)}"><span class="dot"></span><span class="txt">${esc(r.call)}</span></button></td>`;
+    }).join('');
+    const prof = markers.length > 1 ? `<td class="mono" style="font-size:.85rem">${markers.map(m => s.cells[m] !== undefined ? esc(state.results[s.cells[m]].call) : '?').join(' · ')}</td>` : '';
+    const att = markers.map(m => s.cells[m]).filter(i => i !== undefined).map(i => state.results[i]).filter(r => r.status !== 'ok')
+      .map(r => `<span>${esc(r.marker)}: ${esc((r.flags.find(f => f.level !== 'info') || {}).text || STATUS[r.status])}</span>`).join('<br>');
+    return `<tr><td style="font-weight:600;white-space:nowrap">${esc(s.name)}</td>${cells}${prof}<td style="font-size:.88rem;min-width:16rem">${att || '<span class="muted">—</span>'}</td></tr>`;
+  }).join('');
+  const probs = state.plan.problems.length ? `<tr><td colspan="${markers.length + 3}" style="color:var(--bad);font-size:.9rem">${state.plan.problems.map(p => `${esc(p.file)}: ${esc(p.text)}`).join('<br>')}</td></tr>` : '';
+  $('#resTable').innerHTML = `<thead>${head}</thead><tbody>${body}${probs}</tbody>`;
+  $('#resTable').querySelectorAll('.cell').forEach(b => b.onclick = () => { selected = +b.dataset.i; selPos = null; renderResults(); renderSheet(); $('#sheet').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+}
+
+/* ---------- Review sheet ---------- */
+function blastURL(seq, name) {
+  return 'https://blast.ncbi.nlm.nih.gov/Blast.cgi?PAGE_TYPE=BlastSearch&PROGRAM=blastn&BLAST_SPEC=&LINK_LOC=blasttab&QUERY=' + encodeURIComponent('>' + name + '\n' + seq);
+}
+function baseSpan(b) { return `<span class="b-${'ACGT'.includes(b) ? b : 'x'}">${esc(b)}</span>`; }
+function reviewPositions(r) {
+  // positions worth looking at: differences from best reference, ambiguous bases, unresolved bases at distinguishing sites
+  const out = new Map();
+  const add = (consPos, anchorPos, kind, label) => { if (consPos == null || consPos < 0) return; if (!out.has(consPos)) out.set(consPos, { consPos, anchorPos, kind, label }); };
+  const sites = new Set(r.sites);
+  r.best.diffs.forEach(d => add(d.consPos, d.anchorPos, 'd', `${d.anchorPos + 1} ${d.ref}→${d.cons}`));
+  r.best.ambCompat.forEach(a => add(a.consPos, a.anchorPos, 'a', `${a.anchorPos + 1} ${a.cons}`));
+  r.best.unresolved.filter(u => sites.has(u.anchorPos)).forEach(u => add(u.consPos, u.anchorPos, 'u', `${u.anchorPos + 1} ?`));
+  return [...out.values()].sort((a, b) => a.consPos - b.consPos);
+}
+function renderSheet() {
+  const el = $('#sheet');
+  if (selected == null || !state || !state.results[selected]) { el.hidden = true; return; }
+  el.hidden = false;
+  const r = state.results[selected];
+  if (!r.consensus) {
+    el.innerHTML = `<div class="sheet-head"><div><span class="label">${esc(r.marker)}</span><div class="call">${esc(r.sample)}: failed</div></div></div><ul class="flags">${r.flags.map(f => `<li class="${f.level}"><span>${esc(f.text)}</span></li>`).join('')}</ul>`;
+    return;
+  }
+  const mk = panel.markers[r.marker];
+  const maxE = Math.max(1, ...r.comps.map(c => c.events));
+  const bars = r.comps.map((c, k) => `<div class="bar${k === 0 ? ' best' : ''}"><span>${esc(c.ref.name)}</span><span class="track"><i style="width:${Math.max(2, 100 * c.events / maxE)}%"></i></span><span class="v">${c.events}</span></div>`).join('');
+  // SNP grid: reference-distinguishing positions + any position where the sample differs
+  const pos = new Set(r.sites);
+  r.best.diffs.forEach(d => { if (d.anchorPos >= 0) pos.add(d.anchorPos); });
+  const cols = [...pos].sort((a, b) => a - b);
+  const consAt = p => { const rp = r.best.ref.fromAnchor[p]; if (rp < 0) return { b: '?', ci: -1 }; const ci = r.best.refToCons[rp]; return ci >= 0 ? { b: r.consensus.seq[ci], ci } : { b: '·', ci: -1 }; };
+  const sampleRow = cols.map(p => {
+    const { b, ci } = consAt(p);
+    const refsHere = mk.refs.map(x => x.fromAnchor[p] >= 0 ? x.seq[x.fromAnchor[p]] : '-');
+    const best = refsHere[mk.refs.indexOf(r.best.ref)];
+    let cls = b === best ? 'm' : (MLST.isAmb(b) ? 'a' : (b === '·' || b === 'N' ? '' : 'd'));
+    return `<td class="${cls}">${esc(b)}</td>`;
+  }).join('');
+  const refRows = mk.refs.map(x => `<tr><td>${esc(x.name)}</td>${cols.map(p => { const b = x.fromAnchor[p] >= 0 ? x.seq[x.fromAnchor[p]] : '-'; return `<td>${baseSpan(b)}</td>`; }).join('')}</tr>`).join('');
+  const grid = `<div class="snp"><table><thead><tr><th>Position</th>${cols.map(p => { const c = consAt(p); return `<th class="${c.ci >= 0 ? 'clk' : ''}" data-ci="${c.ci}">${p + 1}</th>`; }).join('')}</tr></thead><tbody>${refRows}<tr class="sample"><td>${esc(r.sample)}</td>${sampleRow}</tr></tbody></table></div>`;
+  const dirLabel = u => u.dir === 'F' ? 'Forward' : u.dir === 'R' ? 'Reverse' : 'Read';
+  const used = r.used.map(u => `<dt>${dirLabel(u)}</dt><dd><span class="mono" style="font-size:.85rem">${esc(u.fileName)}</span><br><span class="muted" style="font-size:.85rem">${u.format === 'ab1' ? `trimmed to ${u.trimLen} of ${u.rawLen} bases${u.peaks.length ? `, ${u.peaks.length} double peak(s)` : ''}` : `${u.rawLen} bases, text file (no quality or trace)`}</span></dd>`).join('');
+  const st = r.stats;
+  const revPos = reviewPositions(r);
+  if (selPos == null && revPos.length) selPos = revPos[0].consPos;
+  const hasTr = r.used.some(u => u.traces);
+  const traceBlock = hasTr ? `
+      <div class="row" style="justify-content:space-between"><h3>Chromatograms</h3><span class="legend"><span class="b-A">A</span><span class="b-C">C</span><span class="b-G">G</span><span class="b-T">T</span></span></div>
+      ${revPos.length ? `<div class="chips">${revPos.map(p => `<button class="chip k-${p.kind}${p.consPos === selPos ? ' on' : ''}" data-ci="${p.consPos}">${esc(p.label)}</button>`).join('')}</div>` : '<p class="muted">Nothing flagged. Select a position number in the table above to view its traces.</p>'}
+      <div class="traces" id="traces"></div>` :
+    `<h3>Chromatograms</h3><p class="muted" style="font-size:.9rem">These reads are text files, so there are no traces to show. Load the original .ab1 files to review peaks here.</p>`;
+  el.innerHTML = `
+    <div class="sheet-head">
+      <div style="display:flex;flex-direction:column;gap:2px;min-width:0"><span class="label">${esc(r.marker)} · ${esc(r.sample)}</span><div class="call">${esc(r.call)}</div></div>
+      <span class="cell s-${r.status}" style="cursor:default"><span class="dot"></span><span class="txt">${STATUS[r.status]}</span></span>
+    </div>
+    ${r.flags.length ? `<ul class="flags">${r.flags.map(f => `<li class="${f.level}"><span>${esc(f.text)}</span></li>`).join('')}</ul>` : `<ul class="flags"><li class="info"><span>Exact match over the full comparison region with forward and reverse reads in agreement. No review needed.</span></li></ul>`}
+    <div class="grid2">
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:0"><h3>Differences from each reference</h3><div class="bars">${bars}</div>
+        <p class="muted" style="font-size:.85rem">Compared over ${r.best.winLen} bp (positions ${mk.window[0] + 1}–${mk.window[1] + 1} of ${esc(mk.refs[0].name)}). Indels count once per event.</p></div>
+      <div style="display:flex;flex-direction:column;gap:10px;min-width:0"><h3>Reads and consensus</h3><dl class="kv">${used}
+        <dt>Consensus</dt><dd>${st.length} bp, ${st.twoRead} bp covered by both reads</dd>
+        <dt>Disagreements</dt><dd>${st.conflicts} base, ${st.indelConflicts} indel (excluded from the call)</dd></dl></div>
+    </div>
+    <div style="display:flex;flex-direction:column;gap:10px"><h3>Positions that distinguish the references</h3>${grid}
+      <p class="muted" style="font-size:.85rem">Green: same as ${esc(r.best.ref.name)}. Red: differs. Amber: ambiguity code. A dot means the consensus does not reach that position.</p></div>
+    <div style="display:flex;flex-direction:column;gap:10px">${traceBlock}</div>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <div class="row" style="justify-content:space-between"><h3>Consensus sequence</h3>
+        <div class="row"><button id="copySeq">Copy</button><a class="btn" target="_blank" rel="noopener" href="${blastURL(r.consensus.seq, r.sample + '_' + r.marker)}">BLAST at NCBI ↗</a></div></div>
+      <div class="seqbox" id="seqbox">${esc(r.consensus.seq)}</div>
+    </div>`;
+  el.querySelectorAll('.chip,.snp th.clk').forEach(b => b.onclick = () => { const ci = +b.dataset.ci; if (ci < 0) return; selPos = ci; el.querySelectorAll('.chip').forEach(c => c.classList.toggle('on', +c.dataset.ci === ci)); drawTraces(r); });
+  $('#copySeq').onclick = () => copy(`>${r.sample}_${r.marker}\n${r.consensus.seq}\n`, 'Consensus copied');
+  if (hasTr) drawTraces(r);
+}
+
+/* ---------- Chromatogram drawing ---------- */
+function cssVar(n) { return getComputedStyle(document.documentElement).getPropertyValue(n).trim(); }
+function drawTraces(r) {
+  const box = $('#traces'); if (!box) return;
+  if (selPos == null) { box.innerHTML = ''; return; }
+  const col = r.consensus.cols[selPos];
+  const html = r.used.map((u, k) => {
+    const s = col.src.find(x => x[0] === k);
+    return `<div class="trace"><div class="cap"><span>${u.dir === 'F' ? 'Forward' : u.dir === 'R' ? 'Reverse' : 'Read'}${u.reversed ? ' (shown reverse-complemented)' : ''} · ${esc(u.fileName)}</span><span>${s ? `read base ${s[1] + 1}` : 'not covered here'}</span></div>${u.traces && s ? `<canvas data-k="${k}" data-i="${s[1]}"></canvas>` : ''}</div>`;
+  }).join('');
+  box.innerHTML = html + `<p class="muted" style="font-size:.85rem">Consensus position ${selPos + 1}: <b class="mono">${esc(col.base)}</b>${col.status === 'conflict' ? ` (reads disagree: ${esc(col.pair)})` : col.status === 'resolved' ? ` (one read called ${esc(col.other)})` : ''}. Traces are oriented to match the reference, so a read sequenced on the opposite strand is shown reverse-complemented.</p>`;
+  box.querySelectorAll('canvas').forEach(cv => drawOne(cv, r.used[+cv.dataset.k], +cv.dataset.i));
+}
+function drawOne(cv, u, i) {
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = 150;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const g = cv.getContext('2d'); g.scale(dpr, dpr);
+  const span = Math.max(6, Math.min(14, Math.floor(W / 34)));
+  const lo = Math.max(0, i - span), hi = Math.min(u.seq.length - 1, i + span);
+  const x0 = u.ploc[lo] - 8, x1 = u.ploc[hi] + 8;
+  let ymax = 1; for (const b of 'ACGT') for (let x = Math.max(0, x0); x <= x1 && x < u.traces[b].length; x++) ymax = Math.max(ymax, u.traces[b][x]);
+  const top = 22, bot = H - 6, sx = x => { const f = (x - x0) / (x1 - x0); return (u.reversed ? 1 - f : f) * W; }, sy = y => bot - (y / ymax) * (bot - top);
+  const comp = { A: 'T', C: 'G', G: 'C', T: 'A' };
+  // highlight
+  g.fillStyle = cssVar('--accent-soft'); const hx = sx(u.ploc[i]); g.fillRect(hx - 9, 0, 18, H);
+  if (u.trimmed && (i < u.trimmed[0] || i >= u.trimmed[1])) { g.fillStyle = cssVar('--sunk'); g.fillRect(0, 0, W, H); }
+  for (const b of 'ACGT') {
+    const shown = u.reversed ? comp[b] : b;
+    g.strokeStyle = cssVar('--b' + shown); g.lineWidth = 1.4; g.beginPath();
+    for (let x = Math.max(0, x0); x <= x1 && x < u.traces[b].length; x++) { const X = sx(x), Y = sy(u.traces[b][x]); x === Math.max(0, x0) ? g.moveTo(X, Y) : g.lineTo(X, Y); }
+    g.stroke();
+  }
+  g.font = '600 12px ' + cssVar('--f-mono'); g.textAlign = 'center';
+  for (let k = lo; k <= hi; k++) {
+    let b = u.seq[k]; if (u.reversed) b = comp[b] || b;
+    const pk = (u.peaks || []).find(p => p.i === k);
+    const label = pk ? (u.reversed ? MLST.revcomp(pk.code) : pk.code) : b;
+    g.fillStyle = 'ACGT'.includes(label) ? cssVar('--b' + label) : cssVar('--warn');
+    g.fillText(label, sx(u.ploc[k]), 15);
+  }
+}
+
+/* ---------- Files table ---------- */
+function renderFiles() {
+  $('#filesBox').hidden = !reads.length;
+  $('#filesCount').textContent = `${reads.length} read(s)`;
+  const byFile = new Map(state.plan.reads.map(r => [r.fileName + '|' + r.recName, r]));
+  const rows = state.plan.reads.filter(r => !r.isRef).map((r, k) => `<tr><td class="mono" style="font-size:.82rem;overflow-wrap:anywhere">${esc(r.fileName)}${r.recName !== r.fileName ? `<br><span class="muted">${esc(r.recName)}</span>` : ''}</td>
+    <td><input type="text" id="sn-${k}" data-f="${esc(r.fileName)}" value="${esc(r.sample)}" aria-label="Sample name for ${esc(r.fileName)}"></td>
+    <td>${esc(r.marker || '—')}</td><td>${r.dir === 'F' ? 'Forward' : r.dir === 'R' ? 'Reverse' : '—'}</td><td>${r.format === 'ab1' ? (r.traces ? 'chromatogram' : 'ab1, no trace') : 'text'}</td>
+    <td style="font-size:.85rem;color:var(--warn)">${esc(r.notes.join(' '))}</td></tr>`).join('');
+  $('#filesTable').innerHTML = `<thead><tr><th>File</th><th>Sample</th><th>Marker</th><th>Read</th><th>Type</th><th>Note</th></tr></thead><tbody>${rows}</tbody>`;
+}
+$('#rerun').onclick = () => { $('#filesTable').querySelectorAll('input[data-f]').forEach(i => { overrides[i.dataset.f] = { ...(overrides[i.dataset.f] || {}), sample: i.value.trim() }; }); selected = null; run(); toast('Re-ran with the edited names'); };
+
+/* ---------- Reference panel UI ---------- */
+function renderRefs() {
+  $('#refList').innerHTML = Object.values(panel.markers).map(mk => `<div style="display:flex;flex-direction:column;gap:8px"><h3>${esc(mk.name)} <span class="muted" style="font-weight:400;font-family:var(--f-body);font-size:.9rem">· comparison region ${mk.window[1] - mk.window[0] + 1} bp · ${mk.sites.length} distinguishing positions</span></h3>
+    <div class="tablebox"><table><thead><tr><th>Allele</th><th>Length</th><th>Source</th></tr></thead><tbody>${mk.refs.map(r => `<tr><td style="font-weight:600">${esc(r.name)}</td><td class="mono">${r.seq.length}</td><td style="font-size:.88rem">${esc(r.note || r.source || '')}</td></tr>`).join('')}</tbody></table></div></div>`).join('');
+}
+$('#loadRefs').onclick = () => $('#refInput').click();
+$('#refInput').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const recs = MLST.panelFromFasta(await f.text(), Object.keys(panel.markers)[0]);
+  if (!recs.length) { toast('No sequences found in that file'); return; }
+  const fresh = recs.map(r => ({ ...r, source: f.name }));
+  panelRefs = $('#replaceRefs').checked ? fresh : panelRefs.concat(fresh);
+  panel = MLST.buildPanel(panelRefs); panelBadge(); renderRefs(); toast(`${recs.length} reference(s) loaded`); e.target.value = ''; run();
+};
+$('#dlRefs').onclick = () => save('mlst_reference_panel.fasta', panelRefs.map(r => `>${r.marker}|${r.name}${r.note ? '|' + r.note : ''}\n${r.seq.match(/.{1,70}/g).join('\n')}`).join('\n') + '\n');
+
+/* ---------- Export ---------- */
+function csvCell(v) { v = String(v ?? ''); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+function summaryRows() {
+  const { samples, markers } = samplesAndMarkers();
+  const rows = [['Sample', ...markers, ...(markers.length > 1 ? ['Profile'] : []), 'Status', 'Needs attention']];
+  for (const s of samples) {
+    const rs = markers.map(m => s.cells[m] !== undefined ? state.results[s.cells[m]] : null);
+    const worst = rs.filter(Boolean).map(r => r.status).sort((a, b) => ['ok', 'review', 'novel', 'bad'].indexOf(b) - ['ok', 'review', 'novel', 'bad'].indexOf(a))[0];
+    rows.push([s.name, ...rs.map(r => r ? r.call : ''), ...(markers.length > 1 ? [rs.map(r => r ? r.call : '?').join(' / ')] : []), STATUS[worst],
+      rs.filter(r => r && r.status !== 'ok').map(r => `${r.marker}: ${(r.flags.find(f => f.level !== 'info') || {}).text || ''}`).join(' | ')]);
+  }
+  return rows;
+}
+$('#dlSummary').onclick = () => save('mlst_allele_calls.csv', summaryRows().map(r => r.map(csvCell).join(',')).join('\n') + '\n');
+$('#copyTable').onclick = () => copy(summaryRows().map(r => r.map(c => String(c).replace(/\t|\n/g, ' ')).join('\t')).join('\n'), 'Table copied. Paste it into Excel.');
+$('#dlDetails').onclick = () => {
+  const rows = [['Sample', 'Marker', 'Call', 'Status', 'Closest reference', 'Differences from closest', 'Difference list (reference position: ref>sample)', 'Next closest', 'Consensus length', 'Read disagreements excluded', 'Flags', 'Files', 'Panel references compared']];
+  for (const r of state.results) {
+    if (!r.consensus) { rows.push([r.sample, r.marker, r.call, STATUS[r.status], '', '', '', '', '', '', r.flags.map(f => f.text).join(' | '), r.files.join('; '), '']); continue; }
+    rows.push([r.sample, r.marker, r.call, STATUS[r.status], r.best.ref.name, r.best.events, r.best.diffs.map(d => `${d.anchorPos + 1}:${d.ref}>${d.cons}`).join(' '),
+      r.comps[1] ? `${r.comps[1].ref.name} (${r.comps[1].events})` : '', r.stats.length, r.stats.conflicts + r.stats.indelConflicts,
+      r.flags.map(f => f.text).join(' | '), r.files.join('; '), r.comps.map(c => `${c.ref.name}:${c.events}`).join(' ')]);
+  }
+  save('mlst_details.csv', rows.map(r => r.map(csvCell).join(',')).join('\n') + '\n');
+};
+$('#dlFasta').onclick = () => save('mlst_consensus.fasta', state.results.filter(r => r.consensus).map(r => `>${r.sample.replace(/\s+/g, '_')}_${r.marker} call=${r.call.replace(/\s+/g, '_')}\n${r.consensus.seq.match(/.{1,70}/g).join('\n')}`).join('\n') + '\n');
+$('#clearAll').onclick = () => { $('#exampleNote').hidden = true; reads = []; overrides = {}; state = null; selected = null; run(); };
+
+async function save(name, text) {
+  const dl = window.claude && window.claude.use ? await window.claude.use('downloads').catch(() => null) : null;
+  if (dl) { try { await dl.save({ filename: name.replace(/\.fasta$/, '.fasta.txt'), data: text }); } catch (e) { if (e && e.code !== 'declined') toast('Download unavailable here. Use Copy instead.'); } return; }
+  const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain' })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+function copy(text, msg) {
+  const fallback = () => { const t = document.createElement('textarea'); t.value = text; document.body.appendChild(t); t.select(); try { document.execCommand('copy'); toast(msg); } catch (e) { toast('Copy failed'); } t.remove(); };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(() => toast(msg), fallback); else fallback();
+}
+
+/* ---------- Settings ---------- */
+$('#applySettings').onclick = () => {
+  const m = parseFloat($('#optMott').value), p = parseFloat($('#optPeak').value);
+  if (!(m > 0 && m < 1) || !(p > 0 && p < 1)) { toast('Both settings must be between 0 and 1'); return; }
+  opts.mottCutoff = m; opts.peakRatio = p; run(); toast('Settings applied');
+};
+
+/* ---------- Wiring ---------- */
+const drop = $('#drop');
+['dragenter', 'dragover'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+drop.addEventListener('drop', async e => { const files = e.dataTransfer.items ? await readEntries([...e.dataTransfer.items]) : [...e.dataTransfer.files]; addFiles(files); });
+window.addEventListener('dragover', e => e.preventDefault()); window.addEventListener('drop', e => e.preventDefault());
+$('#pickFiles').onclick = () => $('#fileInput').click();
+$('#pickFolder').onclick = () => $('#folderInput').click();
+$('#fileInput').onchange = e => { addFiles([...e.target.files]); e.target.value = ''; };
+$('#folderInput').onchange = e => { addFiles([...e.target.files]); e.target.value = ''; };
+$('#loadExample').onclick = () => {
+  reads = []; overrides = {}; selected = null; $('#exampleNote').hidden = false;
+  const enc = new TextEncoder();
+  addFiles(EXAMPLE_READS.map(x => ({ name: x.name, arrayBuffer: async () => enc.encode(x.text).buffer })), true);
+};
+window.addEventListener('resize', () => { if (state && selected != null && state.results[selected] && state.results[selected].consensus) drawTraces(state.results[selected]); });
+
+panelBadge(); renderRefs();
+if (EXAMPLE_READS.length) $('#loadExample').click(); else $('#loadExample').hidden = true;
+})();
+</script>
+</body>
+</html>
