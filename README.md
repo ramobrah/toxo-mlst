@@ -1,6 +1,6 @@
 # Toxo MLST Allele Caller
 
-A free, browser-based tool for calling *Toxoplasma gondii* MLST alleles from Sanger reads. It replaces the manual Geneious Prime workflow and needs no software installation or computational skills.
+A free, browser-based tool for calling *Toxoplasma gondii* MLST alleles from Sanger reads. This tool needs no software installation or computational skills.
 
 **Status:** proof of concept. The built-in reference panel covers only the PK1 marker (Types I, II, III, X and COUG/TgCgCa1) and is not yet complete.
 
