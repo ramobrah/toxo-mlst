@@ -173,24 +173,75 @@ function align(a, b, opt = {}) {
 }
 
 /* ---------- Reference panel ---------- */
-/** refs: [{marker, name, seq, source}] -> panel {markers: {PK1: {...}}} */
-function buildPanel(refs) {
+/* ---------- PCR primers ---------- */
+/** Find a primer (IUPAC-aware) in seq, either strand. Returns best hit {pos, end, strand, mm} or null. */
+function findPrimer(seq, primer, maxMM = 3) {
+  primer = cleanSeq(primer);
+  let best = null;
+  for (const [strand, pr] of [['+', primer], ['-', revcomp(primer)]]) {
+    const L = pr.length;
+    for (let i = 0; i + L <= seq.length; i++) {
+      let mm = 0;
+      for (let k = 0; k < L && mm <= maxMM; k++) if (!compatible(seq[i + k], pr[k])) mm++;
+      if (mm <= maxMM && (!best || mm < best.mm)) best = { pos: i, end: i + L, strand, mm };
+    }
+  }
+  return best;
+}
+
+/**
+ * refs: [{marker, name, seq, note}], primers: {MARKER: {fwd, rev, source}}
+ * opts.region: 'auto' (between primers when primers are known) | 'primers' | 'full'
+ */
+function buildPanel(refs, primers = {}, opts = {}) {
+  const region = opts.region || 'auto';
   const markers = {};
   for (const r of refs) (markers[r.marker] = markers[r.marker] || { name: r.marker, refs: [] }).refs.push({ ...r, seq: cleanSeq(r.seq) });
   for (const mk of Object.values(markers)) {
-    const anchor = mk.refs[0];
+    const pr = primers[mk.name] || null;
+    mk.primers = pr;
+    mk.region = pr && region !== 'full' ? 'primers' : 'full';
+    // anchor: prefer a reference that contains both primer sites, oriented so the forward primer reads forward
+    let anchor = mk.refs[0];
+    if (pr) {
+      for (const r of mk.refs) {
+        const f = findPrimer(r.seq, pr.fwd), v = findPrimer(r.seq, pr.rev);
+        r.primerHits = { fwd: f, rev: v };
+      }
+      const both = mk.refs.find(r => r.primerHits.fwd && r.primerHits.rev);
+      if (both) {
+        anchor = both;
+        if (both.primerHits.fwd.strand === '-') { both.seq = revcomp(both.seq); both.primerHits = { fwd: findPrimer(both.seq, pr.fwd), rev: findPrimer(both.seq, pr.rev) }; }
+      }
+      mk.refs = [anchor, ...mk.refs.filter(r => r !== anchor)];
+    }
     mk.anchor = anchor.seq;
     mk.kmers = kmerSet(anchor.seq);
     for (const r of mk.refs) {
       if (r !== anchor && sharedKmers(mk.kmers, revcomp(r.seq)) > sharedKmers(mk.kmers, r.seq)) { r.seq = revcomp(r.seq); r.flippedToPanel = true; }
+      if (pr && r !== anchor) r.primerHits = { fwd: findPrimer(r.seq, pr.fwd), rev: findPrimer(r.seq, pr.rev) };
       const al = r === anchor ? { cols: [...r.seq].map((_, i) => [i, i]) } : align(anchor.seq, r.seq);
       r.toAnchor = new Array(r.seq.length).fill(-1);  // ref pos -> anchor pos
       r.fromAnchor = new Array(anchor.seq.length).fill(-1); // anchor pos -> ref pos
       for (const [ai, ri] of al.cols) if (ai >= 0 && ri >= 0) { r.toAnchor[ri] = ai; r.fromAnchor[ai] = ri; }
       const cov = r.fromAnchor.map((v, i) => v >= 0 ? i : -1).filter(v => v >= 0);
       r.anchorSpan = [cov[0], cov[cov.length - 1]];
+      // the typed region lies strictly between the primers (primer sequence reflects the primer, not the template)
+      r.cut = null;
+      if (mk.region === 'primers' && r.primerHits) {
+        const hits = [r.primerHits.fwd, r.primerHits.rev].filter(Boolean);
+        let lo = 0, hi = r.seq.length - 1;
+        if (hits.length === 2) { const [h1, h2] = hits.sort((x, y) => x.pos - y.pos); lo = h1.end; hi = h2.pos - 1; }
+        else if (hits.length === 1) { const h = hits[0]; if (h.pos < r.seq.length / 2) lo = h.end; else hi = h.pos - 1; }
+        if (hits.length) {
+          r.cut = [lo, hi];
+          const near = (p, dir) => { while (p >= 0 && p < r.seq.length && r.toAnchor[p] < 0) p += dir; return p >= 0 && p < r.seq.length ? r.toAnchor[p] : null; };
+          const a0 = near(lo, 1), a1 = near(hi, -1);
+          if (a0 !== null) r.anchorSpan[0] = Math.max(r.anchorSpan[0], a0);
+          if (a1 !== null) r.anchorSpan[1] = Math.min(r.anchorSpan[1], a1);
+        }
+      }
     }
-    mk.kmersAll = new Set(); for (const r of mk.refs) for (const k of kmerSet(r.seq)) mk.kmersAll.add(k);
     mk.window = [Math.max(...mk.refs.map(r => r.anchorSpan[0])), Math.min(...mk.refs.map(r => r.anchorSpan[1]))];
     for (const r of mk.refs) {
       let s = mk.window[0], e = mk.window[1];
@@ -198,29 +249,38 @@ function buildPanel(refs) {
       while (r.fromAnchor[e] < 0 && e > s) e--;
       r.win = [r.fromAnchor[s], r.fromAnchor[e]]; // inclusive, in ref coords
     }
-    // anchor-projected reference bases at each window position (gap '-' if ref has deletion relative to anchor)
+    // k-mers of the compared region only, so markers cut from the same gene (alt.SAG2, 3′-SAG2) stay distinct
+    mk.kmersAll = new Set(); for (const r of mk.refs) for (const k of kmerSet(r.seq.slice(r.win[0], r.win[1] + 1))) mk.kmersAll.add(k);
+    mk.primerSummary = pr ? { found: mk.refs.filter(r => r.primerHits && r.primerHits.fwd && r.primerHits.rev).length, oneSide: mk.refs.filter(r => r.primerHits && !!r.primerHits.fwd !== !!r.primerHits.rev).length, total: mk.refs.length } : null;
     mk.sites = [];
     for (let p = mk.window[0]; p <= mk.window[1]; p++) {
       const bases = mk.refs.map(r => r.fromAnchor[p] >= 0 ? r.seq[r.fromAnchor[p]] : '-');
       if (new Set(bases).size > 1) mk.sites.push(p);
     }
-    // identical-over-window groups
-    mk.windowSeq = r => r.seq.slice(r.win[0], r.win[1] + 1);
   }
-  return { markers };
+  return { markers, primers };
 }
+/** Parse a panel FASTA. Reference records: >MARKER|Allele|note. Primer records (no sequence lines): >MARKER|primers|FWD|REV */
 function panelFromFasta(text, defaultMarker) {
-  return parseFasta(text).map(r => {
+  const refs = [], primers = {};
+  for (const line of text.split(/\r?\n/)) {
+    const m = line.match(/^>\s*([^|]+)\|\s*primers?\s*\|\s*([A-Za-z]+)\s*\|\s*([A-Za-z]+)/i);
+    if (m) primers[m[1].trim()] = { fwd: cleanSeq(m[2]), rev: cleanSeq(m[3]), source: 'loaded file' };
+  }
+  for (const r of parseFasta(text)) {
     const parts = r.header.split('|').map(s => s.trim());
-    if (parts.length >= 2) return { marker: parts[0], name: parts[1], note: parts.slice(2).join(' | '), seq: r.seq };
-    return { marker: defaultMarker || 'Marker', name: r.header || 'Reference', seq: r.seq };
-  });
+    if (parts[1] && /^primers?$/i.test(parts[1])) continue;
+    if (parts.length >= 2) refs.push({ marker: parts[0], name: parts[1], note: parts.slice(2).join(' | '), seq: r.seq });
+    else refs.push({ marker: defaultMarker || 'Marker', name: r.header || 'Reference', seq: r.seq });
+  }
+  return { refs, primers };
 }
 
 /* ---------- File name interpretation ---------- */
 const DIR_WORDS = [[/forward|foward|fwd/i, 'F'], [/reverse|rev(?![a-z])/i, 'R']];
 function markerRegex(name) {
-  let esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/'/g, "['’]?");
+  // punctuation and spaces in marker names are optional in file names: alt.SAG2 = altSAG2 = alt SAG2; 3′-SAG2 = 3SAG2 = 3'SAG2
+  let esc = name.split(/[.'’′\-\s_]+/).map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join("[.'’′\\-\\s_]*");
   esc = esc.replace(/1/g, '[1I]'); // PK1 is often typed PKI
   return new RegExp('(^|[^A-Za-z0-9])(' + esc + ')([FR]?)(?=$|[^A-Za-z0-9])', 'i');
 }
@@ -379,7 +439,11 @@ function callAllele(cons, mk) {
     call = 'No exact match'; status = 'novel';
     flags.push({ level: 'bad', text: `Closest reference is ${best.ref.name} with ${best.events} difference(s). Check the chromatograms, then BLAST the consensus.` });
   }
-  if (best.uncovered > 0) {
+  if (best.uncovered > 0.3 * best.winLen && mk.region === 'full') {
+    flags.unshift({ level: 'bad', text: `The ${mk.name} references are much longer than this sample (it covers ${Math.round(100 * (1 - best.uncovered / best.winLen))}% of them), so differences at the read ends may be spurious. ` +
+      (mk.primers ? `Set "Region compared" to "Between the PCR primers" in Settings.` : `Add the PCR primers for ${mk.name} in the Reference panel, or use references trimmed to the amplicon.`) });
+    if (status === 'ok') status = 'review';
+  } else if (best.uncovered > 0) {
     const missingSites = [...allSites].filter(p => { const rp = best.ref.fromAnchor[p]; return rp >= 0 && !isCoveredRefPos(cons, best, rp); });
     flags.push({ level: missingSites.length ? 'warn' : 'info', text: `Consensus does not cover ${best.uncovered} of ${best.winLen} bases of the comparison region` + (missingSites.length ? `, including ${missingSites.length} position(s) that distinguish references.` : '.') });
     if (missingSites.length && status === 'ok') status = 'review';
@@ -411,7 +475,7 @@ function callAllele(cons, mk) {
   } else if (best.ambCompat.length) flags.push({ level: 'info', text: `${best.ambCompat.length} ambiguous base(s) outside reference-distinguishing positions; they do not affect the call.` });
   if (best.unresolved.length - unresAtSites.length > 0) flags.push({ level: 'info', text: `${best.unresolved.length - unresAtSites.length} forward/reverse disagreement(s) at positions that do not affect the call (excluded).` });
   const singleDiffs = best.diffs.filter(d => d.cov === 1);
-  if (status === 'novel' && singleDiffs.length) {
+  if (status === 'novel' && singleDiffs.length && !cons.assembled) {
     if (singleDiffs.length === best.diffs.length) {
       call = best.ref.name; status = 'review';
       flags.unshift({ level: 'warn', text: `Every difference from ${best.ref.name} is seen in only one read, which often means a base-calling error at the end of a read. Check the chromatogram before accepting ${best.ref.name}.` });
@@ -470,9 +534,12 @@ function analyzeGroup(g, panel, opts) {
     if (good.length > 2) { const f = good.find(r => r.dir === 'F'), rv = good.find(r => r.dir === 'R'); if (f && rv) used = [f, rv]; }
     res.used = used;
     if (!used.length) { res.call = 'Failed'; res.status = 'bad'; return res; }
-    if (used.length === 1) res.flags.push({ level: 'warn', text: 'Only one usable read; the call rests on single-read coverage.' });
+    const assembled = used.length === 1 && !used[0].dir;
+    if (assembled) res.flags.push({ level: 'info', text: 'Single sequence with no forward/reverse label, treated as a finished consensus (for example from nanopore or an earlier assembly).' });
+    else if (used.length === 1) res.flags.push({ level: 'warn', text: 'Only one usable read; the call rests on single-read coverage.' });
     if (used.length === 2 && used[0].reversed === used[1].reversed) res.flags.push({ level: 'warn', text: 'Both reads point the same direction. Check that one forward and one reverse read were supplied.' });
     const cons = buildConsensus(used);
+    cons.assembled = assembled;
     res.consensus = cons;
     const conflicts = cons.cols.filter(c => c.status === 'conflict').length;
     res.stats = { length: cons.seq.length, twoRead: cons.cols.filter(c => c.cov === 2).length, conflicts, indelConflicts: cons.cols.filter(c => c.status === 'indel-conflict').length,
@@ -491,6 +558,6 @@ function analyze(readsIn, panel, opts = {}, overrides = {}) {
 }
 
 const API = { IUPAC, revcomp, cleanSeq, parseABIF, parseFasta, parseFile, mottTrim, secondaryPeaks, align, buildPanel, panelFromFasta,
-  interpretName, sampleKey, analyze, planGroups, analyzeGroup, sortResults, DEFAULTS, encode, isAmb, setOf };
+  interpretName, sampleKey, findPrimer, analyze, planGroups, analyzeGroup, sortResults, DEFAULTS, encode, isAmb, setOf };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.MLST = API;
 })(typeof window !== 'undefined' ? window : globalThis);

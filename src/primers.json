@@ -1,0 +1,87 @@
+{
+ "c22-8": {
+  "fwd": "TCTCTCTACGTGGACGCC",
+  "rev": "AGGTGCTTGGATATTCGC",
+  "size": 521,
+  "fwdName": "c22-8F",
+  "revName": "c22-8R",
+  "source": "Su et al. 2006 (PMID 16643922); Khan et al. (2005) and this study"
+ },
+ "c29-2": {
+  "fwd": "AGTTCTGCAGAGTGTCGC",
+  "rev": "TGTCTAGGAAAGAGGCGC",
+  "size": 446,
+  "fwdName": "c29-2F",
+  "revName": "c29-2R",
+  "source": "Su et al. 2006 (PMID 16643922); Khan et al. (2005) and this study"
+ },
+ "L358": {
+  "fwd": "AGGAGGCGTAGCGCAAGT",
+  "rev": "CCCTCTGGCTGCAGTGCT",
+  "size": 418,
+  "fwdName": "L358-F2",
+  "revName": "L358-R2",
+  "source": "Su et al. 2006 (PMID 16643922); Khan et al. (2005) and this study"
+ },
+ "SAG1": {
+  "fwd": "GTTCTAACCACGCACCCTGAG",
+  "rev": "AAGAGTGGGAGGCTCTGTGA",
+  "source": "Provided by Omar Harb from the lab protocol (Oct 2026)"
+ },
+ "alt.SAG2": {
+  "fwd": "GGAACGCGAACAATGAGTTT",
+  "rev": "GCACTGTTGTCCAGGGTTTT",
+  "source": "Provided by Omar Harb from the lab protocol (Oct 2026). Also covers the 5′-SAG2 fragment.",
+  "nested": {
+   "fwd": "ACCCATCTGCGAAGAAAACG",
+   "rev": "ATTTCGACCAGCGGGAGCAC",
+   "size": 546,
+   "source": "Su et al. 2006 (PMID 16643922); Lehmann et al. (2000) and this study"
+  }
+ },
+ "3′-SAG2": {
+  "fwd": "TCTGTTCTCCGAAGTGACTCC",
+  "rev": "TCAAAGCGTGCATTATCGC",
+  "source": "Provided by Omar Harb from the lab protocol (Oct 2026)"
+ },
+ "PK1": {
+  "fwd": "CGCAAAGGGAGACAATCAGT",
+  "rev": "TCATCGCTGAATCTCATTGC",
+  "size": 903,
+  "fwdName": "PK1-F",
+  "revName": "PK1-R",
+  "source": "Su et al. 2006 (PMID 16643922); Khan et al. (2005) and this study"
+ },
+ "BTUB": {
+  "fwd": "GAGGTCATCTCGGACGAACA",
+  "rev": "TTGTAGGAACACCCGGACGC",
+  "size": 411,
+  "fwdName": "Btb-F",
+  "revName": "Btb-R",
+  "source": "Su et al. 2006 (PMID 16643922); Khan et al. (2005) and this study"
+ },
+ "GRA6": {
+  "fwd": "TTTCCGAGCAGGTGACCT",
+  "rev": "TCGCCGAAGAGTTGACATAG",
+  "size": 344,
+  "fwdName": "GRA6-F1",
+  "revName": "GRA6-R1x",
+  "source": "Su et al. 2006 (PMID 16643922); Fazaeli et al. (2000) and this study"
+ },
+ "SAG3": {
+  "fwd": "CAACTCTCACCATTCCACCC",
+  "rev": "GCGCGTTGTTAGACAAGACA",
+  "size": 311,
+  "fwdName": "P43S1",
+  "revName": "P43AS1",
+  "source": "Su et al. 2006 (PMID 16643922); Grigg et al. (2001b)"
+ },
+ "Apico": {
+  "fwd": "TGCAAATTCTTGAATTCTCAGTT",
+  "rev": "GGGATTCGAACCCTTGATA",
+  "size": 640,
+  "fwdName": "Apico-F",
+  "revName": "Apico-R",
+  "source": "Su et al. 2006 (PMID 16643922); This study"
+ }
+}

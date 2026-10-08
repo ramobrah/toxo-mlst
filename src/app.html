@@ -200,7 +200,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
   <details class="more" id="refBox">
     <summary>Reference panel</summary>
     <div class="in">
-      <p class="muted" style="font-size:.9rem">Calls are only as good as this panel. Each marker is compared over the region that every reference covers. To use your own panel, load a FASTA file whose headers read <span class="mono">&gt;MARKER|Allele name|optional note</span>, for example <span class="mono">&gt;SAG3|Type II|GenBank AB123456</span>.</p>
+      <p class="muted" style="font-size:.9rem">Calls are only as good as this panel. References can be amplicons or whole genes. When PCR primers are known for a marker, samples are compared over the region between them; otherwise over the region every reference covers. To use your own panel, load a FASTA file whose headers read <span class="mono">&gt;MARKER|Allele name|optional note</span>, for example <span class="mono">&gt;SAG3|Type II|GenBank AB123456</span>. Add primers as a header line with no sequence: <span class="mono">&gt;SAG3|primers|FORWARD|REVERSE</span>.</p>
       <div id="refList"></div>
       <div class="row">
         <button id="loadRefs">Load reference FASTA…</button>
@@ -217,6 +217,8 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
       <div class="kv" style="align-items:center;max-width:640px">
         <dt><label for="optMott">Trimming error limit</label></dt>
         <dd class="row"><input type="number" id="optMott" step="0.01" min="0.001" max="0.5" value="0.05" style="width:6rem"><span class="muted" style="font-size:.85rem">Mott's algorithm on .ab1 quality scores. 0.05 matches the Geneious default.</span></dd>
+        <dt><label for="optRegion">Region compared</label></dt>
+        <dd class="row"><select id="optRegion"><option value="auto">Between the PCR primers, when primers are known</option><option value="full">Full length shared by all references</option></select><span class="muted" style="font-size:.85rem">Use full length when your sequences span the whole gene (for example nanopore consensus sequences) and you want every difference counted.</span></dd>
         <dt><label for="optPeak">Double-peak threshold</label></dt>
         <dd class="row"><input type="number" id="optPeak" step="0.05" min="0.1" max="0.9" value="0.33" style="width:6rem"><span class="muted" style="font-size:.85rem">Second-highest peak as a fraction of the highest. Above this, the base is written as an ambiguity code.</span></dd>
       </div>
@@ -225,7 +227,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
   </details>
 
   <footer>
-    <span>Method: reads are matched to a marker and oriented by shared 12-mers, trimmed with Mott's algorithm (when quality scores exist), assembled by overlap alignment, then aligned to every reference. A call needs zero differences across the shared comparison region. Forward/reverse disagreements are excluded and reported. Ambiguity codes at positions that distinguish references raise a mixed-infection flag.</span>
+    <span>Method: reads are matched to a marker and oriented by shared 12-mers, trimmed with Mott's algorithm (when quality scores exist), assembled by overlap alignment, then aligned to every reference. A call needs zero differences across the comparison region, which is the stretch between the PCR primers when they are known. Forward/reverse disagreements are excluded and reported. Ambiguity codes at positions that distinguish references raise a mixed-infection flag.</span>
     <span>Proof of concept for the VEuPathDB / ToxoDB community. The reference panel is a sample and is not yet complete.</span>
   </footer>
 </div>
@@ -237,6 +239,7 @@ footer{font-size:.82rem;color:var(--muted);border-top:1px solid var(--line);padd
 </script>
 <script>
 const BUILTIN_PANEL = /*PANEL*/;
+const BUILTIN_PRIMERS = /*PRIMERS*/;
 const EXAMPLE_READS = /*EXAMPLE*/;
 </script>
 <script>
@@ -247,13 +250,15 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;'
 const STATUS = { ok: 'Called', review: 'Review', novel: 'No match', bad: 'Failed' };
 
 let panelRefs = BUILTIN_PANEL.map(r => ({ ...r, source: 'built-in' }));
-let panel = MLST.buildPanel(panelRefs);
+let panelPrimers = JSON.parse(JSON.stringify(BUILTIN_PRIMERS));
+const opts = { ...MLST.DEFAULTS, region: 'auto' };
+const rebuildPanel = () => { panel = MLST.buildPanel(panelRefs, panelPrimers, opts); };
+let panel; rebuildPanel();
 let reads = [];          // parsed reads currently loaded
 let overrides = {};      // fileName -> {sample}
 let state = null;        // {plan, results}
 let selected = null;     // index into results
 let selPos = null;       // selected consensus position for traces
-const opts = { ...MLST.DEFAULTS };
 
 function toast(t) { const el = $('#toast'); el.textContent = t; el.classList.add('on'); clearTimeout(toast.t); toast.t = setTimeout(() => el.classList.remove('on'), 2400); }
 function panelBadge() {
@@ -319,7 +324,7 @@ function addRefsFromReads(parsed, nm) {
     if (panelRefs.some(r => r.marker === marker && (r.seq === seq || r.seq === rc || MLST.revcomp(r.seq) === seq))) continue;
     panelRefs.push({ marker, name, seq, note: 'Loaded from ' + p.fileName, source: 'session' }); n++;
   }
-  if (n) { panel = MLST.buildPanel(panelRefs); panelBadge(); renderRefs(); }
+  if (n) { rebuildPanel(); panelBadge(); renderRefs(); }
   return n;
 }
 
@@ -508,19 +513,38 @@ $('#rerun').onclick = () => { $('#filesTable').querySelectorAll('input[data-f]')
 
 /* ---------- Reference panel UI ---------- */
 function renderRefs() {
-  $('#refList').innerHTML = Object.values(panel.markers).map(mk => `<div style="display:flex;flex-direction:column;gap:8px"><h3>${esc(mk.name)} <span class="muted" style="font-weight:400;font-family:var(--f-body);font-size:.9rem">· comparison region ${mk.window[1] - mk.window[0] + 1} bp · ${mk.sites.length} distinguishing positions</span></h3>
-    <div class="tablebox"><table><thead><tr><th>Allele</th><th>Length</th><th>Source</th></tr></thead><tbody>${mk.refs.map(r => `<tr><td style="font-weight:600">${esc(r.name)}</td><td class="mono">${r.seq.length}</td><td style="font-size:.88rem">${esc(r.note || r.source || '')}</td></tr>`).join('')}</tbody></table></div></div>`).join('');
+  const primerCell = pr => pr ? `<span class="mono" style="font-size:.82rem">F ${esc(pr.fwd)}<br>R ${esc(pr.rev)}</span>` +
+    (pr.nested ? `<br><span class="muted" style="font-size:.8rem">Nested (inner): <span class="mono">${esc(pr.nested.fwd)} / ${esc(pr.nested.rev)}</span></span>` : '') : '<span class="muted">none</span>';
+  const blocks = Object.values(panel.markers).map(mk => {
+    const ps = mk.primerSummary;
+    const regionTxt = mk.region === 'primers'
+      ? `compared between the PCR primers: ${mk.window[1] - mk.window[0] + 1} bp`
+      : `compared over the full length shared by all references: ${mk.window[1] - mk.window[0] + 1} bp`;
+    const primerNote = mk.primers ? (ps.found === ps.total ? `Both primer sites found in all ${ps.total} references.`
+      : ps.found + ps.oneSide === 0 ? `Primer sites are not inside these references (they are probably already trimmed to the amplicon), so each reference is used as it is.`
+      : `Primer sites found in ${ps.found} of ${ps.total} references; the others are used as they are.`) : 'No primers known for this marker.';
+    return `<div style="display:flex;flex-direction:column;gap:8px"><h3>${esc(mk.name)} <span class="muted" style="font-weight:400;font-family:var(--f-body);font-size:.9rem">· ${regionTxt} · ${mk.sites.length} distinguishing positions</span></h3>
+    <div class="row" style="gap:16px;font-size:.88rem;align-items:flex-start"><span class="label" style="padding-top:2px">Primers</span>${primerCell(mk.primers)}<span class="muted" style="max-width:52ch">${esc(primerNote)}</span></div>
+    <div class="tablebox"><table><thead><tr><th>Allele</th><th>Length</th><th>Source</th></tr></thead><tbody>${mk.refs.map(r => `<tr><td style="font-weight:600">${esc(r.name)}</td><td class="mono">${r.seq.length}</td><td style="font-size:.88rem">${esc(r.note || r.source || '')}</td></tr>`).join('')}</tbody></table></div></div>`;
+  });
+  const waiting = Object.entries(panelPrimers).filter(([m]) => !panel.markers[m]);
+  if (waiting.length) blocks.push(`<div style="display:flex;flex-direction:column;gap:8px"><h3>Primers only, no reference alleles yet</h3>
+    <div class="tablebox"><table><thead><tr><th>Marker</th><th>Primers</th><th>Amplicon</th><th>Source</th></tr></thead><tbody>${waiting.map(([m, pr]) => `<tr><td style="font-weight:600;white-space:nowrap">${esc(m)}</td><td>${primerCell(pr)}</td><td class="mono" style="white-space:nowrap">${pr.size ? pr.size + ' bp' : '—'}</td><td style="font-size:.85rem">${esc(pr.source || '')}</td></tr>`).join('')}</tbody></table></div>
+    <p class="muted" style="font-size:.85rem">Most built-in primers are from Su et al. 2006 (PMID 16643922); SAG1, alt.SAG2 and 3′-SAG2 come from the lab protocol.</p></div>`);
+  $('#refList').innerHTML = blocks.join('');
 }
 $('#loadRefs').onclick = () => $('#refInput').click();
 $('#refInput').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
-  const recs = MLST.panelFromFasta(await f.text(), Object.keys(panel.markers)[0]);
-  if (!recs.length) { toast('No sequences found in that file'); return; }
+  const { refs: recs, primers: prs } = MLST.panelFromFasta(await f.text(), Object.keys(panel.markers)[0]);
+  const np = Object.keys(prs).length;
+  if (!recs.length && !np) { toast('No sequences or primers found in that file'); return; }
   const fresh = recs.map(r => ({ ...r, source: f.name }));
-  panelRefs = $('#replaceRefs').checked ? fresh : panelRefs.concat(fresh);
-  panel = MLST.buildPanel(panelRefs); panelBadge(); renderRefs(); toast(`${recs.length} reference(s) loaded`); e.target.value = ''; run();
+  if ($('#replaceRefs').checked) { panelRefs = fresh; panelPrimers = {}; } else panelRefs = panelRefs.concat(fresh);
+  Object.assign(panelPrimers, prs);
+  rebuildPanel(); panelBadge(); renderRefs(); toast(`${recs.length} reference(s) and ${np} primer pair(s) loaded`); e.target.value = ''; run();
 };
-$('#dlRefs').onclick = () => save('mlst_reference_panel.fasta', panelRefs.map(r => `>${r.marker}|${r.name}${r.note ? '|' + r.note : ''}\n${r.seq.match(/.{1,70}/g).join('\n')}`).join('\n') + '\n');
+$('#dlRefs').onclick = () => save('mlst_reference_panel.fasta', Object.entries(panelPrimers).map(([m, p]) => `>${m}|primers|${p.fwd}|${p.rev}`).join('\n') + '\n' + panelRefs.map(r => `>${r.marker}|${r.name}${r.note ? '|' + r.note : ''}\n${r.seq.match(/.{1,70}/g).join('\n')}`).join('\n') + '\n');
 
 /* ---------- Export ---------- */
 function csvCell(v) { v = String(v ?? ''); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
@@ -564,7 +588,7 @@ function copy(text, msg) {
 $('#applySettings').onclick = () => {
   const m = parseFloat($('#optMott').value), p = parseFloat($('#optPeak').value);
   if (!(m > 0 && m < 1) || !(p > 0 && p < 1)) { toast('Both settings must be between 0 and 1'); return; }
-  opts.mottCutoff = m; opts.peakRatio = p; run(); toast('Settings applied');
+  opts.mottCutoff = m; opts.peakRatio = p; opts.region = $('#optRegion').value; rebuildPanel(); renderRefs(); run(); toast('Settings applied');
 };
 
 /* ---------- Wiring ---------- */
