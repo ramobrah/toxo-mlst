@@ -189,6 +189,41 @@ function findPrimer(seq, primer, maxMM = 3) {
   return best;
 }
 
+/** All sites a primer could bind (either strand), keeping only hits close to the best match. */
+function findPrimerHits(seq, primer, maxMM = 3) {
+  primer = cleanSeq(primer);
+  const hits = [];
+  for (const [strand, pr] of [['+', primer], ['-', revcomp(primer)]]) {
+    const L = pr.length;
+    for (let i = 0; i + L <= seq.length; i++) {
+      let mm = 0;
+      for (let k = 0; k < L && mm <= maxMM; k++) if (!compatible(seq[i + k], pr[k])) mm++;
+      if (mm <= maxMM) hits.push({ pos: i, end: i + L, strand, mm });
+    }
+  }
+  if (!hits.length) return [];
+  const best = Math.min(...hits.map(h => h.mm));
+  return hits.filter(h => h.mm <= best + 1);
+}
+/**
+ * Locate both primers. When a primer can bind more than one site (e.g. inside a tandem repeat), use the
+ * innermost pair: the shortest product with the primers facing each other. Returns {fwd, rev, extraSites}.
+ */
+function locatePrimers(seq, pr) {
+  const F = findPrimerHits(seq, pr.fwd), R = findPrimerHits(seq, pr.rev);
+  let best = null;
+  for (const f of F) for (const r of R) {
+    if (f.strand === r.strand) continue;
+    const [a, b] = f.strand === '+' ? [f, r] : [r, f]; // a must be upstream on the + strand
+    if (a.end > b.pos) continue;
+    const len = b.end - a.pos;
+    if (!best || len < best.len || (len === best.len && f.mm + r.mm < best.mm)) best = { fwd: f, rev: r, len, mm: f.mm + r.mm };
+  }
+  if (best) return { fwd: best.fwd, rev: best.rev, extraSites: F.length + R.length - 2, product: best.len };
+  const pick = H => H.length ? H.reduce((x, y) => y.mm < x.mm ? y : x) : null;
+  return { fwd: pick(F), rev: pick(R), extraSites: Math.max(0, F.length - 1) + Math.max(0, R.length - 1), product: null };
+}
+
 /**
  * refs: [{marker, name, seq, note}], primers: {MARKER: {fwd, rev, source}}
  * opts.region: 'auto' (between primers when primers are known) | 'primers' | 'full'
@@ -196,7 +231,7 @@ function findPrimer(seq, primer, maxMM = 3) {
 function buildPanel(refs, primers = {}, opts = {}) {
   const region = opts.region || 'auto';
   const markers = {};
-  for (const r of refs) (markers[r.marker] = markers[r.marker] || { name: r.marker, refs: [] }).refs.push({ ...r, seq: cleanSeq(r.seq) });
+  refs.forEach((r, i) => (markers[r.marker] = markers[r.marker] || { name: r.marker, refs: [] }).refs.push({ ...r, seq: cleanSeq(r.seq), order: i })); // order = position in the panel file, used to pick display names
   for (const mk of Object.values(markers)) {
     const pr = primers[mk.name] || null;
     mk.primers = pr;
@@ -205,13 +240,12 @@ function buildPanel(refs, primers = {}, opts = {}) {
     let anchor = mk.refs[0];
     if (pr) {
       for (const r of mk.refs) {
-        const f = findPrimer(r.seq, pr.fwd), v = findPrimer(r.seq, pr.rev);
-        r.primerHits = { fwd: f, rev: v };
+        r.primerHits = locatePrimers(r.seq, pr);
       }
       const both = mk.refs.find(r => r.primerHits.fwd && r.primerHits.rev);
       if (both) {
         anchor = both;
-        if (both.primerHits.fwd.strand === '-') { both.seq = revcomp(both.seq); both.primerHits = { fwd: findPrimer(both.seq, pr.fwd), rev: findPrimer(both.seq, pr.rev) }; }
+        if (both.primerHits.fwd.strand === '-') { both.seq = revcomp(both.seq); both.primerHits = locatePrimers(both.seq, pr); }
       }
       mk.refs = [anchor, ...mk.refs.filter(r => r !== anchor)];
     }
@@ -219,7 +253,7 @@ function buildPanel(refs, primers = {}, opts = {}) {
     mk.kmers = kmerSet(anchor.seq);
     for (const r of mk.refs) {
       if (r !== anchor && sharedKmers(mk.kmers, revcomp(r.seq)) > sharedKmers(mk.kmers, r.seq)) { r.seq = revcomp(r.seq); r.flippedToPanel = true; }
-      if (pr && r !== anchor) r.primerHits = { fwd: findPrimer(r.seq, pr.fwd), rev: findPrimer(r.seq, pr.rev) };
+      if (pr && r !== anchor) r.primerHits = locatePrimers(r.seq, pr);
       const al = r === anchor ? { cols: [...r.seq].map((_, i) => [i, i]) } : align(anchor.seq, r.seq);
       r.toAnchor = new Array(r.seq.length).fill(-1);  // ref pos -> anchor pos
       r.fromAnchor = new Array(anchor.seq.length).fill(-1); // anchor pos -> ref pos
@@ -251,7 +285,12 @@ function buildPanel(refs, primers = {}, opts = {}) {
     }
     // k-mers of the compared region only, so markers cut from the same gene (alt.SAG2, 3′-SAG2) stay distinct
     mk.kmersAll = new Set(); for (const r of mk.refs) for (const k of kmerSet(r.seq.slice(r.win[0], r.win[1] + 1))) mk.kmersAll.add(k);
-    mk.primerSummary = pr ? { found: mk.refs.filter(r => r.primerHits && r.primerHits.fwd && r.primerHits.rev).length, oneSide: mk.refs.filter(r => r.primerHits && !!r.primerHits.fwd !== !!r.primerHits.rev).length, total: mk.refs.length } : null;
+    // references that are identical over the compared region share one allele; the first in panel order represents it
+    const seen = new Map();
+    for (const r of [...mk.refs].sort((a, b) => a.order - b.order)) { const k = r.seq.slice(r.win[0], r.win[1] + 1); if (!seen.has(k)) seen.set(k, r); r.rep = seen.get(k); }
+    mk.alleles = [...seen.values()];
+    mk.pos = p => p - mk.window[0] + 1; // positions are numbered from the start of the compared region
+    mk.primerSummary = pr ? { multi: mk.refs.filter(r => r.primerHits && r.primerHits.extraSites > 0).length, products: [...new Set(mk.refs.map(r => r.primerHits && r.primerHits.product).filter(Boolean))].sort((a, b) => a - b), found: mk.refs.filter(r => r.primerHits && r.primerHits.fwd && r.primerHits.rev).length, oneSide: mk.refs.filter(r => r.primerHits && !!r.primerHits.fwd !== !!r.primerHits.rev).length, total: mk.refs.length } : null;
     mk.sites = [];
     for (let p = mk.window[0]; p <= mk.window[1]; p++) {
       const bases = mk.refs.map(r => r.fromAnchor[p] >= 0 ? r.seq[r.fromAnchor[p]] : '-');
@@ -411,10 +450,10 @@ function compareToRef(cons, ref, mk) {
 
 function callAllele(cons, mk) {
   const comps = mk.refs.map(r => compareToRef(cons, r, mk));
-  comps.sort((a, b) => a.events - b.events || a.uncovered - b.uncovered);
+  comps.sort((a, b) => a.events - b.events || a.uncovered - b.uncovered || a.ref.order - b.ref.order);
   const exact = comps.filter(c => c.events === 0);
   const flags = [];
-  let call, status;
+  let call, status, sameAs = [];
   // which anchor positions discriminate among the candidate references?
   const discrim = (refs) => {
     const s = new Set();
@@ -433,7 +472,12 @@ function callAllele(cons, mk) {
   else if (exact.length > 1) {
     const d = discrim(exact.map(c => c.ref));
     call = exact.map(c => c.ref.name).join(' / ');
-    if (d.size === 0) { status = 'ok'; flags.push({ level: 'info', text: `${call} are identical over the compared region of ${mk.name}.` }); }
+    if (d.size === 0) {
+      // references with the same allele over the compared region: report the first (panel order) and list the rest
+      call = exact[0].ref.name; status = 'ok';
+      sameAs = [...new Set(exact.slice(1).map(c => c.ref.name))].filter(n => n !== call);
+      if (sameAs.length) flags.push({ level: 'info', text: `${call} is identical over the compared region of ${mk.name} to: ${sameAs.join(', ')}.` });
+    }
     else { status = 'review'; flags.push({ level: 'warn', text: `Matches ${call} equally; the ${d.size} position(s) that tell them apart are not resolved in this sample.` }); }
   } else {
     call = 'No exact match'; status = 'novel';
@@ -448,7 +492,7 @@ function callAllele(cons, mk) {
     flags.push({ level: missingSites.length ? 'warn' : 'info', text: `Consensus does not cover ${best.uncovered} of ${best.winLen} bases of the comparison region` + (missingSites.length ? `, including ${missingSites.length} position(s) that distinguish references.` : '.') });
     if (missingSites.length && status === 'ok') status = 'review';
   }
-  if (unresAtSites.length) { flags.push({ level: 'warn', text: `${unresAtSites.length} position(s) that distinguish references have forward/reverse disagreement: ${unresAtSites.map(u => 'pos ' + (u.anchorPos + 1) + ' (' + u.detail + ')').join(', ')}.` }); if (status === 'ok') status = 'review'; }
+  if (unresAtSites.length) { flags.push({ level: 'warn', text: `${unresAtSites.length} position(s) that distinguish references have forward/reverse disagreement: ${unresAtSites.map(u => 'pos ' + mk.pos(u.anchorPos) + ' (' + u.detail + ')').join(', ')}.` }); if (status === 'ok') status = 'review'; }
   const refBase = (r, p) => r.fromAnchor[p] >= 0 ? r.seq[r.fromAnchor[p]] : '-';
   const mixed = ambAtSites.filter(a => { const bases = new Set(mk.refs.map(r => refBase(r, a.anchorPos))); return [...setOf(a.cons)].filter(x => bases.has(x)).length >= 2; });
   if (mixed.length) {
@@ -456,8 +500,9 @@ function callAllele(cons, mk) {
     const consAt = new Map(); best.ambCompat.forEach(a => consAt.set(a.anchorPos, a.cons));
     const unresSet = new Set(best.unresolved.map(u => u.anchorPos));
     const pairs = [];
-    for (let x = 0; x < mk.refs.length; x++) for (let y = x + 1; y < mk.refs.length; y++) {
-      const A = mk.refs[x], B = mk.refs[y]; let ok = true;
+    const reps = mk.alleles || mk.refs;
+    for (let x = 0; x < reps.length; x++) for (let y = x + 1; y < reps.length; y++) {
+      const A = reps[x], B = reps[y]; let ok = true;
       for (const p of allSites) {
         if (unresSet.has(p)) continue;
         const want = new Set([refBase(A, p), refBase(B, p)]);
@@ -468,7 +513,7 @@ function callAllele(cons, mk) {
       if (ok) pairs.push([A.name, B.name]);
     }
     const pairTxt = pairs.length ? pairs.map(p => p.join(' + ')).join(' or ') : null;
-    flags.push({ level: 'warn', text: `Double peaks at ${mixed.length} position(s) that distinguish references (${mixed.map(a => 'pos ' + (a.anchorPos + 1) + ' ' + a.cons).join(', ')}). ` +
+    flags.push({ level: 'warn', text: `Double peaks at ${mixed.length} position(s) that distinguish references (${mixed.map(a => 'pos ' + mk.pos(a.anchorPos) + ' ' + a.cons).join(', ')}). ` +
       (pairTxt ? `The pattern fits a mixture of ${pairTxt}.` : 'The pattern does not fit a simple mixture of two references.') + ' Possible mixed infection; review the chromatograms.' });
     if (pairTxt) { call = 'Mixed? ' + pairTxt; for (let i = flags.length - 1; i >= 0; i--) if (flags[i].text.startsWith('Matches ')) flags.splice(i, 1); }
     status = 'review';
@@ -482,7 +527,7 @@ function callAllele(cons, mk) {
       const i = flags.findIndex(f => f.level === 'bad'); if (i >= 0) flags.splice(i, 1);
     } else flags.push({ level: 'warn', text: `${singleDiffs.length} of the ${best.diffs.length} differences are seen in only one read.` });
   }
-  return { call, status, flags, comps, best, sites: [...allSites].sort((a, b) => a - b) };
+  return { call, status, flags, sameAs, comps, best, sites: [...allSites].sort((a, b) => a - b) };
 }
 function isCoveredRefPos(cons, comp, rp) { return !comp.uncoveredSet || !comp.uncoveredSet.has(rp); }
 
@@ -545,7 +590,7 @@ function analyzeGroup(g, panel, opts) {
     res.stats = { length: cons.seq.length, twoRead: cons.cols.filter(c => c.cov === 2).length, conflicts, indelConflicts: cons.cols.filter(c => c.status === 'indel-conflict').length,
       mixed: cons.cols.filter(c => c.status === 'mixed' || c.status === 'ambiguous').length };
     const c = callAllele(cons, mk);
-    Object.assign(res, { call: c.call, status: c.status, comps: c.comps, best: c.best, sites: c.sites });
+    Object.assign(res, { call: c.call, status: c.status, sameAs: c.sameAs, comps: c.comps, best: c.best, sites: c.sites });
     res.flags.push(...c.flags);
     return res;
   }
@@ -558,6 +603,6 @@ function analyze(readsIn, panel, opts = {}, overrides = {}) {
 }
 
 const API = { IUPAC, revcomp, cleanSeq, parseABIF, parseFasta, parseFile, mottTrim, secondaryPeaks, align, buildPanel, panelFromFasta,
-  interpretName, sampleKey, findPrimer, analyze, planGroups, analyzeGroup, sortResults, DEFAULTS, encode, isAmb, setOf };
+  interpretName, sampleKey, findPrimer, locatePrimers, analyze, planGroups, analyzeGroup, sortResults, DEFAULTS, encode, isAmb, setOf };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.MLST = API;
 })(typeof window !== 'undefined' ? window : globalThis);
