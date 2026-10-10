@@ -2,7 +2,28 @@
 
 A free, browser-based tool for calling *Toxoplasma gondii* MLST alleles from Sanger reads. It replaces the manual Geneious Prime workflow and needs no software installation or computational skills.
 
-**Status:** proof of concept. PCR primers are built in for 11 markers (c22-8, c29-2, L358, SAG1, alt.SAG2, 3′-SAG2, PK1, BTUB, GRA6, SAG3, Apico). Reference alleles are so far included only for PK1 (Types I, II, III, X and COUG/TgCgCa1).
+**Status:** proof of concept. PCR primers are built in for 11 markers. Reference alleles are built in for 7 of them, taken from 15 *T. gondii* genomes in ToxoDB (ARI, BR9, CAST, COUG, DOM2, FOU, GT1, MAS, ME49, P89, PRC2, RH88, RUB, VAND, VEG). PK1 also includes the lab's own Type I, II, III, X and COUG references.
+
+## Reference panel
+
+| Marker | Expected product | Compared region | Distinct alleles among the 15 genomes |
+|---|---|---|---|
+| PK1 | 902–903 bp | 845 bp | 10 |
+| SAG1 | 476 bp | 435 bp | 6 |
+| alt.SAG2 | 726–729 bp | 686 bp | 7 |
+| 3′-SAG2 | 326–327 bp | 287 bp | 5 |
+| SAG3 | 311 bp | 271 bp | 5 |
+| BTUB | 411 bp | 371 bp | 5 |
+| GRA6 | 344 bp | 306 bp | 9 |
+| c22-8, c29-2, L358, Apico | primers only | — | references not yet added |
+
+Every primer pair was checked against all 15 genomes (both sites found, at most one mismatch). Notes:
+
+- **SAG1:** the forward primer sits in a 27 bp tandem repeat upstream of the start codon and can bind more than one copy. The tool uses the innermost pair of sites, which gives the same 476 bp product in every strain.
+- **alt.SAG2:** the built-in pair is the outer PCR. The inner (nested) pair from Su et al. 2006 gives 546 bp and is listed as a note. If the nested product is what gets sequenced, switch to the inner pair.
+- **PK1 and BTUB** references are ToxoDB transcript or gene sequences without flanks; both primer sites lie inside them, and the products match the published sizes.
+
+When several references are identical over the compared region, the call shows the first name in panel order, and the others are listed as identical ("Type I = 5 more").
 
 ## How to use it
 
@@ -46,6 +67,7 @@ Primers go on a header line with no sequence below it:
 - `src/app.html`: page template; `build.py` combines it with `core.js`, the panel and the primers to produce `index.html`
 - `src/panel.json`: built-in reference alleles
 - `src/primers.json`: built-in PCR primers and their sources
+- `add_marker.py`, `check_marker.js`: add a marker's ToxoDB sequences to the panel, then check primer sites, alleles and simulated calls (`python3 add_marker.py GRA6 gra6.fasta 'genomic sequence'`, then `node check_marker.js GRA6` and `python3 build.py`)
 - `test/`: Node test runner and a synthetic `.ab1` generator
 
 Developed by VEuPathDB for the *Toxoplasma* research community.
